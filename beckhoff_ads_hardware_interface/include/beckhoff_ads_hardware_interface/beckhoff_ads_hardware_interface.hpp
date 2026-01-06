@@ -27,81 +27,92 @@
 namespace beckhoff_ads_hardware_interface
 {
 
-enum class PLCType
-{
+  enum class PLCType
+  {
     // Using enum instead of raw strings for faster iterations in read/write
-    UNKNOWN, BOOL, LREAL, REAL, UDINT, DINT, INT, UINT, SINT, USINT, BYTE, STRING,
-};
+    UNKNOWN,
+    BOOL,
+    LREAL,
+    REAL,
+    UDINT,
+    DINT,
+    INT,
+    UINT,
+    SINT,
+    USINT,
+    BYTE,
+    STRING,
+  };
 
-// Describes each PLC item (array or single variable) for polling via sum commands.
-struct ADSDataLayout {
+  // Describes each PLC item (array or single variable) for polling via sum commands.
+  struct ADSDataLayout
+  {
     // Configured from yaml
-    std::string plc_name_symbolic;     // e.g., "MAIN.Joint_Pos_State". Used to get the handle.
-    PLCType     plc_type;
-    uint32_t    ads_handle;          // PLC Handle for the symbolic name. Not using AdsHandle, as we don't need a shared ptr, just a value to paste in the message
+    std::string plc_name_symbolic; // e.g., "MAIN.Joint_Pos_State". Used to get the handle.
+    PLCType plc_type;
+    uint32_t ads_handle; // PLC Handle for the symbolic name. Not using AdsHandle, as we don't need a shared ptr, just a value to paste in the message
 
-    size_t      num_elements;        // 6 for LREAL[6], 1 for single LREAL/BOOL etc.
-    size_t      plc_element_byte_size; // byte size of ONE element on PLC (e.g., 8 for LREAL, 1 for BOOL).
-
-    // for mapping to ros2_control
-    size_t      offset_in_ros2_control;    // Starting index in hw_states_ or hw_commands_
+    size_t num_elements;          // 6 for LREAL[6], 1 for single LREAL/BOOL etc.
+    size_t plc_element_byte_size; // byte size of ONE element on PLC (e.g., 8 for LREAL, 1 for BOOL).
 
     // If we have an identically named command and state interface, in case there are no new commands to be sent to the robot, we want to use the value read in the state interface for the next request.
-    size_t      offset_in_ros2_control_state_ = std::numeric_limits<size_t>::max();
+    // for mapping the ros2 state interfaces names to the corresponding command interfaces names <command_interface_name, state_interface_name>
+    std::map<std::string, std::string> state_command_interfaces_map_;
 
     // for unpacking sum read response  [Err1_ULONG,...,ErrN_ULONG | Data1_bytes,...,DataN_bytes]
-    size_t      offset_in_read_response_error;    // Byte offset where this item's ULONG error code starts.
-    size_t      offset_in_read_response_data;     // Byte offset where this item's data starts.
+    size_t offset_in_read_response_error; // Byte offset where this item's ULONG error code starts.
+    size_t offset_in_read_response_data;  // Byte offset where this item's data starts.
 
     // for packing sum write response [ADS_ITEM_REQ_HEADER_1,...,ADS_ITEM_REQ_HEADER_N | Data1_bytes,...,DataN_bytes]
-    size_t      offset_in_write_request_data;     // Byte offset where this item's data starts.
-};
+    size_t offset_in_write_request_data; // Byte offset where this item's data starts.
 
-// Packed header for sum read/write request item headers
-typedef struct {
-    uint32_t indexGroup;  // ADSIGRP_SYM_VALBYHND
-    uint32_t indexOffset; // The ADS Handle
-    uint32_t NumBytesData;      // total num of bytes in this data section
-} ADS_ITEM_REQ_HEADER;
+    // For interfaces targeting the same PLC symbol, store all their names with their corresponding index inside a map. This will be useful when calling thr ROS2 set_state and set_command functions.
+    std::map<size_t, std::string> ros2_interfaces_;
+  };
 
-class BeckhoffADSHardwareInterface : public hardware_interface::SystemInterface
-{
-public:
-    hardware_interface::CallbackReturn on_init(const hardware_interface::HardwareComponentParams & params);
+  // Packed header for sum read/write request item headers
+  typedef struct
+  {
+    uint32_t indexGroup;   // ADSIGRP_SYM_VALBYHND
+    uint32_t indexOffset;  // The ADS Handle
+    uint32_t NumBytesData; // total num of bytes in this data section
+  } ADS_ITEM_REQ_HEADER;
+
+  class BeckhoffADSHardwareInterface : public hardware_interface::SystemInterface
+  {
+  public:
+    hardware_interface::CallbackReturn on_init(const hardware_interface::HardwareComponentParams &params);
 
     hardware_interface::CallbackReturn on_configure(
-      const rclcpp_lifecycle::State & previous_state) override;
+        const rclcpp_lifecycle::State &previous_state) override;
 
-    std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
+    // std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
 
-    std::vector<hardware_interface::CommandInterface> export_command_interfaces() override;
+    // std::vector<hardware_interface::CommandInterface> export_command_interfaces() override;
 
     hardware_interface::CallbackReturn on_activate(
-      const rclcpp_lifecycle::State & previous_state) override;
+        const rclcpp_lifecycle::State &previous_state) override;
 
     hardware_interface::CallbackReturn on_deactivate(
-      const rclcpp_lifecycle::State & previous_state) override;
+        const rclcpp_lifecycle::State &previous_state) override;
 
     hardware_interface::CallbackReturn on_shutdown(
-    const rclcpp_lifecycle::State & previous_state) override;
+        const rclcpp_lifecycle::State &previous_state) override;
 
     hardware_interface::return_type read(
-      const rclcpp::Time & time, const rclcpp::Duration & period) override;
+        const rclcpp::Time &time, const rclcpp::Duration &period) override;
 
     hardware_interface::return_type write(
-      const rclcpp::Time & time, const rclcpp::Duration & period) override;
+        const rclcpp::Time &time, const rclcpp::Duration &period) override;
 
-private:
+  private:
     rclcpp::Logger getLogger() { return rclcpp::get_logger("BeckhoffADSHardwareInterface"); }
     std::shared_ptr<rclcpp::Clock> logging_throttle_clock_;
-
-    std::vector<double> hw_commands_;
-    std::vector<double> hw_states_;
 
     // ========= PLC ==============================
 
     // PLC Type and Size Helpers
-    PLCType strToPlcType(const std::string& type_str);
+    PLCType strToPlcType(const std::string &type_str);
     size_t plcTypeByteSize(PLCType type_enum);
 
     // ADS Communication objects
@@ -112,6 +123,8 @@ private:
     // Describes each variable on the PLC
     std::vector<ADSDataLayout> ads_item_layouts_read_;
     std::vector<ADSDataLayout> ads_item_layouts_write_;
+    void configure_ads_read();
+    void configure_ads_write();
     bool build_sum_read_buffers();
     bool build_sum_write_buffers();
 
@@ -129,6 +142,6 @@ private:
     size_t num_items_write_ = 0;
   };
 
-}  // namespace beckhoff_ads_hardware_interface
+} // namespace beckhoff_ads_hardware_interface
 
-#endif  // beckhoff_ads_hardware_interface__BECKHOFF_SYSTEM_HPP_
+#endif // beckhoff_ads_hardware_interface__BECKHOFF_SYSTEM_HPP_
