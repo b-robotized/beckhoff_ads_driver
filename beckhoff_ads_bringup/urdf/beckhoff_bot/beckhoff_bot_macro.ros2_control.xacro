@@ -25,16 +25,17 @@
         </hardware>
 
         <!-- IMPORTANT!
-        As it is currently implemented, multiple interfaces targeting different indices of a PLC variable of type ARRAY[x] 
-        MUST be defined in ascending order starting at 0! (0, 1, 2...). 
+        As it is currently implemented, multiple interfaces targeting different indices of a PLC variable of type ARRAY[x]
+        MUST be defined in ascending order starting at 0! (0, 1, 2...).
         Declaring indices descending or out-of-order (2, 1, 0) causes mismatch between hw_states/command buffers and byte buffers received from PLC
         -->
-        
+
         <!-- These interfaces can be declared for any component - joint, gpio or sensor -->
 
         <gpio name="robot_io">
             <xacro:command_interface_PLC name="joggingEnabled" PLC_symbol="MAIN.joggingEnabled" PLC_type="BOOL" initial_value="1"/>
             <xacro:command_interface_PLC name="myRobotMode" PLC_symbol="MAIN.myRobotMode" PLC_type="UDINT" initial_value="5"/>
+            <xacro:command_interface_PLC name="motionType" PLC_symbol="MAIN.motionType" PLC_type="USINT" initial_value="1"/>
             <xacro:command_interface_PLC name="commandPos_0" PLC_symbol="MAIN.commandPos" PLC_type="BOOL" n_elements="2" index="0" initial_value="1"/>
             <xacro:command_interface_PLC name="commandPos_1" PLC_symbol="MAIN.commandPos" PLC_type="BOOL" n_elements="2" index="1" initial_value="1"/>            
         </gpio>
@@ -43,10 +44,15 @@
             <xacro:state_interface_PLC name="batteryVoltage" PLC_symbol="MAIN.batteryVoltage" PLC_type="REAL"/>
             <xacro:state_interface_PLC name="currentPos_0" PLC_symbol="MAIN.currentPos" PLC_type="LREAL" n_elements="2" index="0" />
             <xacro:state_interface_PLC name="currentPos_1" PLC_symbol="MAIN.currentPos" PLC_type="LREAL" n_elements="2" index="1" />
+            <xacro:state_interface_PLC name="pickCount" PLC_symbol="MAIN.pickCount" PLC_type="UINT" />
+            <xacro:state_interface_PLC name="currentTemperature" PLC_symbol="MAIN.currentTemperature" PLC_type="INT" />
+            <xacro:state_interface_PLC name="ledMap" PLC_symbol="MAIN.ledMap" PLC_type="BYTE"/>
+
 
             <!-- In this example, these mirror command interfaces, so we can monitor if the variables are set correctly. -->
             <xacro:state_interface_PLC name="joggingEnabled" PLC_symbol="MAIN.joggingEnabled" PLC_type="BOOL" />
             <xacro:state_interface_PLC name="myRobotMode" PLC_symbol="MAIN.myRobotMode" PLC_type="UDINT"/>
+            <xacro:state_interface_PLC name="motionType" PLC_symbol="MAIN.motionType" PLC_type="UDINT"/>
             <xacro:state_interface_PLC name="commandPos_0" PLC_symbol="MAIN.commandPos" PLC_type="BOOL" n_elements="2" index="0" />
             <xacro:state_interface_PLC name="commandPos_1" PLC_symbol="MAIN.commandPos" PLC_type="BOOL" n_elements="2" index="1" />     
         </sensor>
