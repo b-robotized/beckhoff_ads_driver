@@ -13,17 +13,23 @@ VAR
 	// --- Command Interfaces (Inputs from ROS) ---
 	joggingEnabled	: BOOL;		// Mapped to: <command_interface name="joggingEnabled">
 	myRobotMode			: UDINT;	// Mapped to: <command_interface name="myRobotMode">
+	motionType      : USINT;      // Mapped to: <command_interface name="motionType">
+
 	
 	// Mapped to: <state_interface name="commandPos">, where n is the element index in this array
 	commandPos		: ARRAY[0..1] OF BOOL;
 
 	// --- State Interfaces (Outputs to ROS) ---
 	statusError	: BOOL;		// Mapped to: <state_interface name="statusError">
-	batteryVoltage	: LREAL;		// Mapped to: <state_interface name="batteryVoltage">
+	batteryVoltage	: REAL;		// Mapped to: <state_interface name="batteryVoltage">
 	
 	// Mapped to: <state_interface name="currentPos_n">, where n is the element index in this array
 	currentPos		: ARRAY[0..1] OF LREAL; 
-
+	
+	pickCount         : UINT; // Mapped to: <state_interface name="pickCount">
+	ledMap : BYTE; // Mapped to: <state_interface name="ledMap"> where Bit 0: Power On ; Bit 1: Robot moving ; Bit 2: At Position ; Bit 3: Error. The other bits are unused 
+	currentTemperature : INT; // Mapped to: <state_interface name="currentTemperature">
+	
 	(*
 	================================================================
 	Internal Helper Variables
@@ -33,6 +39,8 @@ VAR
 	_counter		: DINT := 0;
 	_angle			: LREAL;
 
+	_atPosition: BOOL; // The robot is placed at the correct position to pick an item
+	
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -42,24 +50,78 @@ _counter := _counter + 1;
 // 2. Make the error status flag toggle on and off.
 IF (_counter MOD 1000) = 0 THEN
 	statusError := NOT statusError;
+	_atPosition := NOT _atPosition;
 END_IF;
 
 // 3. Simulate a fluctuating battery voltage using a sine wave.
-_angle := DINT_TO_LREAL(_counter) * 0.01;
-batteryVoltage := 24.0 + (SIN(_angle) * 0.5);
+_angle := DINT_TO_REAL(_counter) * 0.01;
+batteryVoltage := LREAL_TO_REAL(24.0 + (SIN(_angle) * 0.5));
 
-// 4. Simulate changing joint positions.
-currentPos[0] := currentPos[0] + 0.0005;
-currentPos[1] := COS(_angle * 2.0);]]></ST>
+// 4. Simulate changing joint positions based on motionType
+CASE motionType OF
+	0 : // Jogging motion : increment values 
+		IF joggingEnabled THEN
+			currentPos[0] := currentPos[0] + 0.0005;
+			currentPos[1] := currentPos[1] + 0.0005;
+		END_IF
+		
+	1: // Simulate robot movement to pick an item
+	 	currentPos[0] := SIN(_angle * 2.0);
+		currentPos[1] := COS(_angle * 2.0);
+
+		IF _atPosition THEN
+				pickCount := pickCount + 1; 
+		END_IF;
+
+	ELSE // motionType code invalid : error
+		statusError := TRUE;
+END_CASE
+
+//5. Simulate varying temperature between [20°,30°]
+currentTemperature := LREAL_TO_INT(25 + 5 * SIN(_angle * 0.1));
+
+// 6. Map the led lights into the variable ledMap
+
+// LED 0 – Power On
+ledMap.0 := TRUE;
+
+// LED 1 – Robot Moving
+ledMap.1 := joggingEnabled OR (motionType = 1);
+
+// LED 2 – Ready to pick item
+ledMap.2 := _atPosition;
+
+// LED 3 – Error
+ledMap.3 := statusError;]]></ST>
     </Implementation>
     <LineIds Name="MAIN">
       <LineId Id="78" Count="3" />
       <LineId Id="85" Count="0" />
-      <LineId Id="131" Count="2" />
+      <LineId Id="131" Count="0" />
+      <LineId Id="201" Count="0" />
+      <LineId Id="132" Count="1" />
       <LineId Id="86" Count="0" />
       <LineId Id="88" Count="3" />
-      <LineId Id="93" Count="0" />
-      <LineId Id="96" Count="0" />
+      <LineId Id="172" Count="1" />
+      <LineId Id="175" Count="1" />
+      <LineId Id="178" Count="0" />
+      <LineId Id="177" Count="0" />
+      <LineId Id="207" Count="0" />
+      <LineId Id="182" Count="0" />
+      <LineId Id="184" Count="0" />
+      <LineId Id="186" Count="0" />
+      <LineId Id="188" Count="1" />
+      <LineId Id="191" Count="0" />
+      <LineId Id="196" Count="2" />
+      <LineId Id="200" Count="0" />
+      <LineId Id="174" Count="0" />
+      <LineId Id="225" Count="0" />
+      <LineId Id="209" Count="0" />
+      <LineId Id="227" Count="0" />
+      <LineId Id="224" Count="0" />
+      <LineId Id="208" Count="0" />
+      <LineId Id="223" Count="0" />
+      <LineId Id="212" Count="10" />
     </LineIds>
   </POU>
 </TcPlcObject>
