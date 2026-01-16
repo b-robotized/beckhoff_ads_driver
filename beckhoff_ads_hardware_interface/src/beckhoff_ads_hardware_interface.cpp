@@ -38,8 +38,8 @@ namespace beckhoff_ads_hardware_interface
         }
 
         // Fill the ADSDataLayout vectors for read and write operations
-        configure_ads_read();
-        configure_ads_write();
+        ads_read_layout_configure();
+        ads_write_layout_configure();
 
         // Request handles for all symbolic PLC variable names
         RCLCPP_INFO(getLogger(), "Fetching ADS handles for configured PLC variables...");
@@ -135,6 +135,21 @@ namespace beckhoff_ads_hardware_interface
             const uint8_t *ptr = reinterpret_cast<const uint8_t *>(&header);
             ads_buffer_sum_read_request_.insert(ads_buffer_sum_read_request_.end(), ptr, ptr + sizeof(ADS_ITEM_REQ_HEADER));
 
+            // For interfaces targeting the same PLC symbol
+            for (const auto &[index, interface_name] : layout.ros2_interfaces_)
+            {
+                // Fill the read instruction vector
+                ReadInstruction read_instruction;
+                read_instruction.read_error_code_offset = layout.offset_in_read_response_error;
+                read_instruction.buffer_offset = layout.offset_in_read_response_data + index * layout.plc_element_byte_size;
+                read_instruction.plc_type = layout.plc_type;
+                read_instruction.plc_element_byte_size = layout.plc_element_byte_size;
+                read_instruction.interface_name = interface_name;
+
+                // The state interfaces' names are ordered by ascending indexes of the PLC array thanks to layout.ros2_interfaces_ being a map
+                ads_read_instructions_.push_back(read_instruction);
+            }
+
             current_data_offset += header.NumBytesData;
             current_error_offset += sizeof(uint32_t);
         }
@@ -174,6 +189,29 @@ namespace beckhoff_ads_hardware_interface
             header_block_ptr[i].NumBytesData = layout.plc_element_byte_size * layout.num_elements;
 
             layout.offset_in_write_request_data = total_header_size + current_data_offset;
+
+            // For interfaces targeting the same PLC symbol
+            for (const auto &[index, interface_name] : layout.ros2_interfaces_)
+            {
+                // Fill the write instruction vector
+                WriteInstruction write_instruction;
+                // write_instruction.write_error_code_offset = layout.offset_in_read_response_error;
+                write_instruction.buffer_offset = layout.offset_in_write_request_data + index * layout.plc_element_byte_size;
+                write_instruction.plc_type = layout.plc_type;
+                write_instruction.plc_element_byte_size = layout.plc_element_byte_size;
+                write_instruction.interface_name = interface_name;
+                write_instruction.fallback_name = "";
+
+                // There exists a state interface for the same PLC symbol
+                if (!layout.state_command_interfaces_map_.empty())
+                {
+                    write_instruction.fallback_name = layout.state_command_interfaces_map_.find(interface_name)->second;
+                }
+
+                // The command interfaces' names are ordered by ascending indexes of the PLC array thanks to layout.ros2_interfaces_ being a map
+                ads_write_instructions_.push_back(write_instruction);
+            }
+
             current_data_offset += header_block_ptr[i].NumBytesData;
             i++;
         }
@@ -183,7 +221,7 @@ namespace beckhoff_ads_hardware_interface
         return true;
     }
 
-    void BeckhoffADSHardwareInterface::configure_ads_read()
+    void BeckhoffADSHardwareInterface::ads_read_layout_configure()
     {
         // Count all state interfaces to pre-allocate memory once and avoid reallocations.
         size_t num_state_interfaces = gpio_state_interfaces_.size() + joint_state_interfaces_.size() + sensor_state_interfaces_.size();
@@ -263,7 +301,7 @@ namespace beckhoff_ads_hardware_interface
         init_ads_read_layout(sensor_state_interfaces_);
     }
 
-    void BeckhoffADSHardwareInterface::configure_ads_write()
+    void BeckhoffADSHardwareInterface::ads_write_layout_configure()
     {
         // Count all command interfaces to pre-allocate memory once and avoid reallocations.
         size_t num_command_interfaces = joint_command_interfaces_.size() + gpio_command_interfaces_.size();
@@ -408,109 +446,107 @@ namespace beckhoff_ads_hardware_interface
         }
 
         bool any_item_read_failed = false;
-        for (const auto &item_layout : ads_item_layouts_read_)
+        for (const auto &read_instruction : ads_read_instructions_)
         {
             uint32_t item_error_code;
             memcpy(&item_error_code,
-                   ads_buffer_sum_read_response_.data() + item_layout.offset_in_read_response_error,
+                   ads_buffer_sum_read_response_.data() + read_instruction.read_error_code_offset,
                    sizeof(uint32_t));
 
             if (item_error_code != ADSERR_NOERR)
             {
-                RCLCPP_WARN_THROTTLE(getLogger(), *logging_throttle_clock_, 1000,
-                                     "ADS Sum Read sub-op for '%s' (handle 0x%X) failed: 0x%X.",
-                                     item_layout.plc_name_symbolic.c_str(), item_layout.ads_handle, item_error_code);
+                // RCLCPP_WARN_THROTTLE(getLogger(), *logging_throttle_clock_, 1000,
+                //                      "ADS Sum Read sub-op for '%s' (handle 0x%X) failed: 0x%X.",
+                //                      item_layout.plc_name_symbolic.c_str(), item_layout.ads_handle, item_error_code);
+
                 // TODO: See if we need to do something on read error. Maybe assign NaN to the interface?
                 any_item_read_failed = true;
                 continue;
             }
 
-            const uint8_t *ptr_plc_source_data = ads_buffer_sum_read_response_.data() + item_layout.offset_in_read_response_data;
+            // Each state interface has its corresponding read_instruction
+            const uint8_t *ptr_plc_element_current = ads_buffer_sum_read_response_.data() + read_instruction.buffer_offset;
 
             // TODO: performance - Hoist the switch/case above for loop?
-            for (size_t k = 0; k < item_layout.num_elements; ++k)
-            {
-                const uint8_t *ptr_plc_element_current = ptr_plc_source_data + k * item_layout.plc_element_byte_size;
 
-                switch (item_layout.plc_type)
-                {
-                case PLCType::LREAL:
-                {
-                    double val;
-                    memcpy(&val, ptr_plc_element_current, item_layout.plc_element_byte_size);
-                    set_state(item_layout.ros2_interfaces_.find(k)->second, val);
-                    break;
-                }
-                case PLCType::REAL:
-                {
-                    float val;
-                    memcpy(&val, ptr_plc_element_current, item_layout.plc_element_byte_size);
-                    set_state(item_layout.ros2_interfaces_.find(k)->second, static_cast<double>(val));
-                    break;
-                }
-                case PLCType::BOOL:
-                {
-                    uint8_t byte_val;
-                    memcpy(&byte_val, ptr_plc_element_current, item_layout.plc_element_byte_size);
-                    set_state(item_layout.ros2_interfaces_.find(k)->second, (byte_val != 0) ? 1.0 : 0.0);
-                    break;
-                }
-                case PLCType::SINT:
-                {
-                    int8_t val;
-                    memcpy(&val, ptr_plc_element_current, item_layout.plc_element_byte_size);
-                    set_state(item_layout.ros2_interfaces_.find(k)->second, static_cast<double>(val));
-                    break;
-                }
-                case PLCType::USINT:
-                case PLCType::BYTE:
-                {
-                    uint8_t val;
-                    memcpy(&val, ptr_plc_element_current, item_layout.plc_element_byte_size);
-                    set_state(item_layout.ros2_interfaces_.find(k)->second, static_cast<double>(val));
-                    break;
-                }
-                case PLCType::INT:
-                {
-                    int16_t val;
-                    memcpy(&val, ptr_plc_element_current, item_layout.plc_element_byte_size);
-                    set_state(item_layout.ros2_interfaces_.find(k)->second, static_cast<double>(val));
-                    break;
-                }
-                case PLCType::UINT:
-                {
-                    uint16_t val;
-                    memcpy(&val, ptr_plc_element_current, item_layout.plc_element_byte_size);
-                    set_state(item_layout.ros2_interfaces_.find(k)->second, static_cast<double>(val));
-                    break;
-                }
-                case PLCType::DINT:
-                {
-                    int32_t val;
-                    memcpy(&val, ptr_plc_element_current, item_layout.plc_element_byte_size);
-                    set_state(item_layout.ros2_interfaces_.find(k)->second, static_cast<double>(val));
-                    break;
-                }
-                case PLCType::UDINT:
-                {
-                    uint32_t val;
-                    memcpy(&val, ptr_plc_element_current, item_layout.plc_element_byte_size);
-                    set_state(item_layout.ros2_interfaces_.find(k)->second, static_cast<double>(val));
-                    break;
-                }
-                /* Not supported for now, guarded against in on_configure()
-                case PLCType::STRING:
-                    break;
-                */
-                case PLCType::UNKNOWN:
-                default:
-                    RCLCPP_ERROR_THROTTLE(getLogger(), *logging_throttle_clock_, 1000,
-                                          "Unhandled or UNKNOWN PLC type (%d) for variable '%s' element %zu during read.",
-                                          static_cast<int>(item_layout.plc_type), item_layout.plc_name_symbolic.c_str(), k);
-                    set_state(item_layout.ros2_interfaces_.find(k)->second, std::numeric_limits<double>::quiet_NaN());
-                    any_item_read_failed = true;
-                    break;
-                }
+            switch (read_instruction.plc_type)
+            {
+            case PLCType::LREAL:
+            {
+                double val;
+                memcpy(&val, ptr_plc_element_current, read_instruction.plc_element_byte_size);
+                set_state(read_instruction.interface_name, val);
+                break;
+            }
+            case PLCType::REAL:
+            {
+                float val;
+                memcpy(&val, ptr_plc_element_current, read_instruction.plc_element_byte_size);
+                set_state(read_instruction.interface_name, static_cast<double>(val));
+                break;
+            }
+            case PLCType::BOOL:
+            {
+                uint8_t byte_val;
+                memcpy(&byte_val, ptr_plc_element_current, read_instruction.plc_element_byte_size);
+                set_state(read_instruction.interface_name, (byte_val != 0) ? 1.0 : 0.0);
+                break;
+            }
+            case PLCType::SINT:
+            {
+                int8_t val;
+                memcpy(&val, ptr_plc_element_current, read_instruction.plc_element_byte_size);
+                set_state(read_instruction.interface_name, static_cast<double>(val));
+                break;
+            }
+            case PLCType::USINT:
+            case PLCType::BYTE:
+            {
+                uint8_t val;
+                memcpy(&val, ptr_plc_element_current, read_instruction.plc_element_byte_size);
+                set_state(read_instruction.interface_name, static_cast<double>(val));
+                break;
+            }
+            case PLCType::INT:
+            {
+                int16_t val;
+                memcpy(&val, ptr_plc_element_current, read_instruction.plc_element_byte_size);
+                set_state(read_instruction.interface_name, static_cast<double>(val));
+                break;
+            }
+            case PLCType::UINT:
+            {
+                uint16_t val;
+                memcpy(&val, ptr_plc_element_current, read_instruction.plc_element_byte_size);
+                set_state(read_instruction.interface_name, static_cast<double>(val));
+                break;
+            }
+            case PLCType::DINT:
+            {
+                int32_t val;
+                memcpy(&val, ptr_plc_element_current, read_instruction.plc_element_byte_size);
+                set_state(read_instruction.interface_name, static_cast<double>(val));
+                break;
+            }
+            case PLCType::UDINT:
+            {
+                uint32_t val;
+                memcpy(&val, ptr_plc_element_current, read_instruction.plc_element_byte_size);
+                set_state(read_instruction.interface_name, static_cast<double>(val));
+                break;
+            }
+            /* Not supported for now, guarded against in on_configure()
+            case PLCType::STRING:
+                break;
+            */
+            case PLCType::UNKNOWN:
+            default:
+                // RCLCPP_ERROR_THROTTLE(getLogger(), *logging_throttle_clock_, 1000,
+                //                       "Unhandled or UNKNOWN PLC type (%d) for variable '%s' element %zu during read.",
+                //                       static_cast<int>(read_instruction.plc_type), read_instruction.plc_name_symbolic.c_str(), k);
+                set_state(read_instruction.interface_name, std::numeric_limits<double>::quiet_NaN());
+                any_item_read_failed = true;
+                break;
             }
         }
         return any_item_read_failed ? hardware_interface::return_type::ERROR : hardware_interface::return_type::OK;
@@ -524,104 +560,99 @@ namespace beckhoff_ads_hardware_interface
             return hardware_interface::return_type::OK;
         }
 
-        for (const auto &item_layout : ads_item_layouts_write_)
+        for (const auto &write_instruction : ads_write_instructions_)
         {
-            uint8_t *ptr_write_buffer_destination = ads_buffer_sum_write_request_.data() + item_layout.offset_in_write_request_data;
+            uint8_t *ptr_write_buffer_destination_current = ads_buffer_sum_write_request_.data() + write_instruction.buffer_offset;
 
             // TODO: performance - Hoist the switch/case above for loop?
-            for (size_t k = 0; k < item_layout.num_elements; ++k)
-            {
-                // store the current val and reset the ros-side command value
-                double val = get_command(item_layout.ros2_interfaces_.find(k)->second);
-                set_command(item_layout.ros2_interfaces_.find(k)->second, std::numeric_limits<double>::quiet_NaN());
 
+            // store the current val and reset the ros-side command value
+            double val = get_command(write_instruction.interface_name);
+            set_command(write_instruction.interface_name, std::numeric_limits<double>::quiet_NaN());
+
+            if (std::isnan(val))
+            {
+                // if the original value was NaN and there exist a state interface of the same name, write corresponding state interface
+                if (!write_instruction.fallback_name.empty())
+                {
+                    val = get_state(write_instruction.fallback_name);
+                }
+
+                // if we STILL don't have a fallback value on, don't update the write buffer.
+                // the last valid command is written
                 if (std::isnan(val))
                 {
-                    // if the original value was NaN and there exist a state interface of the same name, write corresponding state interface
-                    if (!item_layout.state_command_interfaces_map_.empty())
-                    {
-                        std::string current_command_interface_name = item_layout.ros2_interfaces_.find(k)->second;
-                        val = get_state(item_layout.state_command_interfaces_map_.find(current_command_interface_name)->second);
-                    }
+                    continue;
+                }
+            }
 
-                    // if we STILL don't have a fallback value on, don't update the write buffer.
-                    // the last valid command is written
-                    if (std::isnan(val))
-                    {
-                        continue;
-                    }
-                }
-
-                uint8_t *ptr_write_buffer_destination_current = ptr_write_buffer_destination + (k * item_layout.plc_element_byte_size);
-
-                switch (item_layout.plc_type)
-                {
-                case PLCType::LREAL:
-                {
-                    // val is already double (LREAL is 8 bytes - 64 bit)
-                    memcpy(ptr_write_buffer_destination_current, &val, item_layout.plc_element_byte_size);
-                    break;
-                }
-                case PLCType::REAL:
-                {
-                    float plc_val = static_cast<float>(val);
-                    memcpy(ptr_write_buffer_destination_current, &plc_val, item_layout.plc_element_byte_size);
-                    break;
-                }
-                case PLCType::BOOL:
-                {
-                    // bool is size of byte in PLC
-                    uint8_t plc_val = (val != 0.0) ? 1 : 0;
-                    memcpy(ptr_write_buffer_destination_current, &plc_val, item_layout.plc_element_byte_size);
-                    break;
-                }
-                case PLCType::SINT:
-                {
-                    int8_t plc_val = static_cast<int8_t>(std::round(val));
-                    memcpy(ptr_write_buffer_destination_current, &plc_val, item_layout.plc_element_byte_size);
-                    break;
-                }
-                case PLCType::USINT:
-                case PLCType::BYTE:
-                {
-                    uint8_t plc_val = static_cast<uint8_t>(std::round(val));
-                    memcpy(ptr_write_buffer_destination_current, &plc_val, item_layout.plc_element_byte_size);
-                    break;
-                }
-                case PLCType::INT:
-                {
-                    int16_t plc_val = static_cast<int16_t>(std::round(val));
-                    memcpy(ptr_write_buffer_destination_current, &plc_val, item_layout.plc_element_byte_size);
-                    break;
-                }
-                case PLCType::UINT:
-                {
-                    uint16_t plc_val = static_cast<uint16_t>(std::round(val));
-                    memcpy(ptr_write_buffer_destination_current, &plc_val, item_layout.plc_element_byte_size);
-                    break;
-                }
-                case PLCType::DINT:
-                {
-                    int32_t plc_val = static_cast<int32_t>(std::round(val));
-                    memcpy(ptr_write_buffer_destination_current, &plc_val, item_layout.plc_element_byte_size);
-                    break;
-                }
-                case PLCType::UDINT:
-                {
-                    uint32_t plc_val = static_cast<uint32_t>(std::round(val));
-                    memcpy(ptr_write_buffer_destination_current, &plc_val, item_layout.plc_element_byte_size);
-                    break;
-                }
-                /* String not supported for now
-                case PLCType::STRING: break;
-                */
-                case PLCType::UNKNOWN:
-                default:
-                    RCLCPP_FATAL(getLogger(), "UNKNOWN PLC type (%d) for variable '%s' element %zu during write. Sending zeroed data of size %zu.",
-                                 static_cast<int>(item_layout.plc_type), item_layout.plc_name_symbolic.c_str(), k, item_layout.plc_element_byte_size);
-                    return hardware_interface::return_type::ERROR;
-                    break;
-                }
+            switch (write_instruction.plc_type)
+            {
+            case PLCType::LREAL:
+            {
+                // val is already double (LREAL is 8 bytes - 64 bit)
+                memcpy(ptr_write_buffer_destination_current, &val, write_instruction.plc_element_byte_size);
+                break;
+            }
+            case PLCType::REAL:
+            {
+                float plc_val = static_cast<float>(val);
+                memcpy(ptr_write_buffer_destination_current, &plc_val, write_instruction.plc_element_byte_size);
+                break;
+            }
+            case PLCType::BOOL:
+            {
+                // bool is size of byte in PLC
+                uint8_t plc_val = (val != 0.0) ? 1 : 0;
+                memcpy(ptr_write_buffer_destination_current, &plc_val, write_instruction.plc_element_byte_size);
+                break;
+            }
+            case PLCType::SINT:
+            {
+                int8_t plc_val = static_cast<int8_t>(std::round(val));
+                memcpy(ptr_write_buffer_destination_current, &plc_val, write_instruction.plc_element_byte_size);
+                break;
+            }
+            case PLCType::USINT:
+            case PLCType::BYTE:
+            {
+                uint8_t plc_val = static_cast<uint8_t>(std::round(val));
+                memcpy(ptr_write_buffer_destination_current, &plc_val, write_instruction.plc_element_byte_size);
+                break;
+            }
+            case PLCType::INT:
+            {
+                int16_t plc_val = static_cast<int16_t>(std::round(val));
+                memcpy(ptr_write_buffer_destination_current, &plc_val, write_instruction.plc_element_byte_size);
+                break;
+            }
+            case PLCType::UINT:
+            {
+                uint16_t plc_val = static_cast<uint16_t>(std::round(val));
+                memcpy(ptr_write_buffer_destination_current, &plc_val, write_instruction.plc_element_byte_size);
+                break;
+            }
+            case PLCType::DINT:
+            {
+                int32_t plc_val = static_cast<int32_t>(std::round(val));
+                memcpy(ptr_write_buffer_destination_current, &plc_val, write_instruction.plc_element_byte_size);
+                break;
+            }
+            case PLCType::UDINT:
+            {
+                uint32_t plc_val = static_cast<uint32_t>(std::round(val));
+                memcpy(ptr_write_buffer_destination_current, &plc_val, write_instruction.plc_element_byte_size);
+                break;
+            }
+            /* String not supported for now
+            case PLCType::STRING: break;
+            */
+            case PLCType::UNKNOWN:
+            default:
+                // RCLCPP_FATAL(getLogger(), "UNKNOWN PLC type (%d) for variable '%s' element %zu during write. Sending zeroed data of size %zu.",
+                //              static_cast<int>(write_instruction.plc_type), write_instruction.plc_name_symbolic.c_str(), k, write_instruction.plc_element_byte_size);
+                return hardware_interface::return_type::ERROR;
+                break;
             }
         }
 

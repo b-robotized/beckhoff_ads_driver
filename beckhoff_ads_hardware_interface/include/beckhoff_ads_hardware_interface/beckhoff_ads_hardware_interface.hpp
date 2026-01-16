@@ -78,6 +78,25 @@ namespace beckhoff_ads_hardware_interface
     uint32_t NumBytesData; // total num of bytes in this data section
   } ADS_ITEM_REQ_HEADER;
 
+  struct ReadInstruction
+  {
+    size_t read_error_code_offset;
+    size_t buffer_offset;
+    PLCType plc_type;
+    size_t plc_element_byte_size;
+    std::string interface_name;
+  };
+
+  struct WriteInstruction
+  {
+    size_t buffer_offset;
+    PLCType plc_type;
+    std::string interface_name;
+    size_t plc_element_byte_size;
+    // size_t error_code_offset;
+    std::string fallback_name; // The state interface name corresponding to the current command interface name
+  };
+
   class BeckhoffADSHardwareInterface : public hardware_interface::SystemInterface
   {
   public:
@@ -85,10 +104,6 @@ namespace beckhoff_ads_hardware_interface
 
     hardware_interface::CallbackReturn on_configure(
         const rclcpp_lifecycle::State &previous_state) override;
-
-    // std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
-
-    // std::vector<hardware_interface::CommandInterface> export_command_interfaces() override;
 
     hardware_interface::CallbackReturn on_activate(
         const rclcpp_lifecycle::State &previous_state) override;
@@ -123,8 +138,8 @@ namespace beckhoff_ads_hardware_interface
     // Describes each variable on the PLC
     std::vector<ADSDataLayout> ads_item_layouts_read_;
     std::vector<ADSDataLayout> ads_item_layouts_write_;
-    void configure_ads_read();
-    void configure_ads_write();
+    void ads_read_layout_configure();
+    void ads_write_layout_configure();
     bool build_sum_read_buffers();
     bool build_sum_write_buffers();
 
@@ -140,6 +155,9 @@ namespace beckhoff_ads_hardware_interface
     std::vector<uint8_t> ads_buffer_sum_write_request_;
     std::vector<uint8_t> ads_buffer_sum_write_response_;
     size_t num_items_write_ = 0;
+
+    std::vector<ReadInstruction> ads_read_instructions_;
+    std::vector<WriteInstruction> ads_write_instructions_;
   };
 
 } // namespace beckhoff_ads_hardware_interface
