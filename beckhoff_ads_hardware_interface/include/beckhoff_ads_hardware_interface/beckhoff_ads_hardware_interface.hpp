@@ -83,7 +83,6 @@ namespace beckhoff_ads_hardware_interface
     size_t read_error_code_offset;
     size_t buffer_offset;
     PLCType plc_type;
-    size_t plc_element_byte_size;
     std::string interface_name;
   };
 
@@ -92,8 +91,6 @@ namespace beckhoff_ads_hardware_interface
     size_t buffer_offset;
     PLCType plc_type;
     std::string interface_name;
-    size_t plc_element_byte_size;
-    // size_t error_code_offset;
     std::string fallback_name; // The state interface name corresponding to the current command interface name
   };
 
