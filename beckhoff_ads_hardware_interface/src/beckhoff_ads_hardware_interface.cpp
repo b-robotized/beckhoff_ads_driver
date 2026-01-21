@@ -7,6 +7,7 @@
 // The file is considered confidential.
 //
 // Author: Nikola Banovic
+// Contributor: Hajar Bartakh
 
 #include <limits>
 #include <vector>
@@ -140,10 +141,10 @@ namespace beckhoff_ads_hardware_interface
             {
                 // Fill the read instruction vector
                 ReadInstruction read_instruction;
-                read_instruction.read_error_code_offset = layout.offset_in_read_response_error;
-                read_instruction.buffer_offset = layout.offset_in_read_response_data + index * layout.plc_element_byte_size;
+                read_instruction.read_buffer_offset_error_code = layout.offset_in_read_response_error;
+                read_instruction.read_buffer_offset_data = layout.offset_in_read_response_data + index * layout.plc_element_byte_size;
                 read_instruction.plc_type = layout.plc_type;
-                read_instruction.interface_name = interface_name;
+                read_instruction.state_interface_name = interface_name;
 
                 // The state interfaces' names are ordered by ascending indexes of the PLC array thanks to layout.ros2_interfaces_ being a map
                 ads_read_instructions_.push_back(read_instruction);
@@ -194,15 +195,15 @@ namespace beckhoff_ads_hardware_interface
             {
                 // Fill the write instruction vector
                 WriteInstruction write_instruction;
-                write_instruction.buffer_offset = layout.offset_in_write_request_data + index * layout.plc_element_byte_size;
+                write_instruction.write_buffer_offset_data = layout.offset_in_write_request_data + index * layout.plc_element_byte_size;
                 write_instruction.plc_type = layout.plc_type;
-                write_instruction.interface_name = interface_name;
-                write_instruction.fallback_name = "";
+                write_instruction.command_interface_name = interface_name;
+                write_instruction.fallback_state_interface_name = "";
 
                 // There exists a state interface for the same PLC symbol
                 if (!layout.state_command_interfaces_map_.empty())
                 {
-                    write_instruction.fallback_name = layout.state_command_interfaces_map_.find(interface_name)->second;
+                    write_instruction.fallback_state_interface_name = layout.state_command_interfaces_map_.find(interface_name)->second;
                 }
 
                 // The command interfaces' names are ordered by ascending indexes of the PLC array thanks to layout.ros2_interfaces_ being a map
@@ -447,14 +448,14 @@ namespace beckhoff_ads_hardware_interface
         {
             uint32_t item_error_code;
             memcpy(&item_error_code,
-                   ads_buffer_sum_read_response_.data() + read_instruction.read_error_code_offset,
+                   ads_buffer_sum_read_response_.data() + read_instruction.read_buffer_offset_error_code,
                    sizeof(uint32_t));
 
             if (item_error_code != ADSERR_NOERR)
             {
                 RCLCPP_WARN_THROTTLE(getLogger(), *logging_throttle_clock_, 1000,
                                      "ADS Sum Read operation corresponding to the state interface '%s' failed: 0x%X.",
-                                     read_instruction.interface_name.c_str(), item_error_code);
+                                     read_instruction.state_interface_name.c_str(), item_error_code);
 
                 // TODO: See if we need to do something on read error. Maybe assign NaN to the interface?
                 any_item_read_failed = true;
@@ -462,7 +463,7 @@ namespace beckhoff_ads_hardware_interface
             }
 
             // Each state interface has its corresponding read_instruction
-            const uint8_t *ptr_plc_element_current = ads_buffer_sum_read_response_.data() + read_instruction.buffer_offset;
+            const uint8_t *ptr_plc_element_current = ads_buffer_sum_read_response_.data() + read_instruction.read_buffer_offset_data;
 
             // TODO: performance - Hoist the switch/case above for loop?
 
@@ -472,28 +473,28 @@ namespace beckhoff_ads_hardware_interface
             {
                 double val;
                 memcpy(&val, ptr_plc_element_current, plcTypeByteSize(read_instruction.plc_type));
-                set_state(read_instruction.interface_name, val);
+                set_state(read_instruction.state_interface_name, val);
                 break;
             }
             case PLCType::REAL:
             {
                 float val;
                 memcpy(&val, ptr_plc_element_current, plcTypeByteSize(read_instruction.plc_type));
-                set_state(read_instruction.interface_name, static_cast<double>(val));
+                set_state(read_instruction.state_interface_name, static_cast<double>(val));
                 break;
             }
             case PLCType::BOOL:
             {
                 uint8_t byte_val;
                 memcpy(&byte_val, ptr_plc_element_current, plcTypeByteSize(read_instruction.plc_type));
-                set_state(read_instruction.interface_name, (byte_val != 0) ? 1.0 : 0.0);
+                set_state(read_instruction.state_interface_name, (byte_val != 0) ? 1.0 : 0.0);
                 break;
             }
             case PLCType::SINT:
             {
                 int8_t val;
                 memcpy(&val, ptr_plc_element_current, plcTypeByteSize(read_instruction.plc_type));
-                set_state(read_instruction.interface_name, static_cast<double>(val));
+                set_state(read_instruction.state_interface_name, static_cast<double>(val));
                 break;
             }
             case PLCType::USINT:
@@ -501,35 +502,35 @@ namespace beckhoff_ads_hardware_interface
             {
                 uint8_t val;
                 memcpy(&val, ptr_plc_element_current, plcTypeByteSize(read_instruction.plc_type));
-                set_state(read_instruction.interface_name, static_cast<double>(val));
+                set_state(read_instruction.state_interface_name, static_cast<double>(val));
                 break;
             }
             case PLCType::INT:
             {
                 int16_t val;
                 memcpy(&val, ptr_plc_element_current, plcTypeByteSize(read_instruction.plc_type));
-                set_state(read_instruction.interface_name, static_cast<double>(val));
+                set_state(read_instruction.state_interface_name, static_cast<double>(val));
                 break;
             }
             case PLCType::UINT:
             {
                 uint16_t val;
                 memcpy(&val, ptr_plc_element_current, plcTypeByteSize(read_instruction.plc_type));
-                set_state(read_instruction.interface_name, static_cast<double>(val));
+                set_state(read_instruction.state_interface_name, static_cast<double>(val));
                 break;
             }
             case PLCType::DINT:
             {
                 int32_t val;
                 memcpy(&val, ptr_plc_element_current, plcTypeByteSize(read_instruction.plc_type));
-                set_state(read_instruction.interface_name, static_cast<double>(val));
+                set_state(read_instruction.state_interface_name, static_cast<double>(val));
                 break;
             }
             case PLCType::UDINT:
             {
                 uint32_t val;
                 memcpy(&val, ptr_plc_element_current, plcTypeByteSize(read_instruction.plc_type));
-                set_state(read_instruction.interface_name, static_cast<double>(val));
+                set_state(read_instruction.state_interface_name, static_cast<double>(val));
                 break;
             }
             /* Not supported for now, guarded against in on_configure()
@@ -540,8 +541,8 @@ namespace beckhoff_ads_hardware_interface
             default:
                 RCLCPP_ERROR_THROTTLE(getLogger(), *logging_throttle_clock_, 1000,
                                       "Unhandled or UNKNOWN PLC type (%d) for the interface '%s' during read.",
-                                      static_cast<int>(read_instruction.plc_type), read_instruction.interface_name.c_str());
-                set_state(read_instruction.interface_name, std::numeric_limits<double>::quiet_NaN());
+                                      static_cast<int>(read_instruction.plc_type), read_instruction.state_interface_name.c_str());
+                set_state(read_instruction.state_interface_name, std::numeric_limits<double>::quiet_NaN());
                 any_item_read_failed = true;
                 break;
             }
@@ -559,20 +560,20 @@ namespace beckhoff_ads_hardware_interface
 
         for (const auto &write_instruction : ads_write_instructions_)
         {
-            uint8_t *ptr_write_buffer_destination_current = ads_buffer_sum_write_request_.data() + write_instruction.buffer_offset;
+            uint8_t *ptr_write_buffer_destination_current = ads_buffer_sum_write_request_.data() + write_instruction.write_buffer_offset_data;
 
             // TODO: performance - Hoist the switch/case above for loop?
 
             // store the current val and reset the ros-side command value
-            double val = get_command(write_instruction.interface_name);
-            set_command(write_instruction.interface_name, std::numeric_limits<double>::quiet_NaN());
+            double val = get_command(write_instruction.command_interface_name);
+            set_command(write_instruction.command_interface_name, std::numeric_limits<double>::quiet_NaN());
 
             if (std::isnan(val))
             {
                 // if the original value was NaN and there exist a state interface of the same name, write corresponding state interface
-                if (!write_instruction.fallback_name.empty())
+                if (!write_instruction.fallback_state_interface_name.empty())
                 {
-                    val = get_state(write_instruction.fallback_name);
+                    val = get_state(write_instruction.fallback_state_interface_name);
                 }
 
                 // if we STILL don't have a fallback value on, don't update the write buffer.
@@ -647,7 +648,7 @@ namespace beckhoff_ads_hardware_interface
             case PLCType::UNKNOWN:
             default:
                 RCLCPP_FATAL(getLogger(), "UNKNOWN PLC type (%d) for the interface '%s' during write. Sending zeroed data of size %zu.",
-                             static_cast<int>(write_instruction.plc_type), write_instruction.interface_name.c_str(), plcTypeByteSize(write_instruction.plc_type));
+                             static_cast<int>(write_instruction.plc_type), write_instruction.command_interface_name.c_str(), plcTypeByteSize(write_instruction.plc_type));
                 return hardware_interface::return_type::ERROR;
                 break;
             }

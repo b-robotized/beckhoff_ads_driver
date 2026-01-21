@@ -7,6 +7,7 @@
 // The file is considered confidential.
 
 // Author: Nikola Banovic
+// Contributor: Hajar Bartakh
 
 #ifndef beckhoff_ads_hardware_interface__BECKHOFF_SYSTEM_HPP_
 #define beckhoff_ads_hardware_interface__BECKHOFF_SYSTEM_HPP_
@@ -80,18 +81,18 @@ namespace beckhoff_ads_hardware_interface
 
   struct ReadInstruction
   {
-    size_t read_error_code_offset;
-    size_t buffer_offset;
+    size_t read_buffer_offset_error_code;
+    size_t read_buffer_offset_data;
     PLCType plc_type;
-    std::string interface_name;
+    std::string state_interface_name;
   };
 
   struct WriteInstruction
   {
-    size_t buffer_offset;
+    size_t write_buffer_offset_data;
     PLCType plc_type;
-    std::string interface_name;
-    std::string fallback_name; // The state interface name corresponding to the current command interface name
+    std::string command_interface_name;
+    std::string fallback_state_interface_name; // The state interface name corresponding to the current command interface name
   };
 
   class BeckhoffADSHardwareInterface : public hardware_interface::SystemInterface
