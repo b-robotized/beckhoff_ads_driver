@@ -13,6 +13,7 @@
 #include <vector>
 #include <cstdint>
 #include <algorithm> // std::transform
+#include <utility>
 
 #include "beckhoff_ads_hardware_interface/beckhoff_ads_hardware_interface.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
@@ -21,8 +22,13 @@
 namespace beckhoff_ads_hardware_interface
 {
     hardware_interface::CallbackReturn BeckhoffADSHardwareInterface::on_init(
-        const hardware_interface::HardwareComponentParams & /*params*/)
+        const hardware_interface::HardwareComponentInterfaceParams &params)
     {
+        if (hardware_interface::SystemInterface::on_init(params) != CallbackReturn::SUCCESS)
+        {
+            return CallbackReturn::ERROR;
+        }
+
         logging_throttle_clock_ = std::make_shared<rclcpp::Clock>(RCL_STEADY_TIME);
 
         return CallbackReturn::SUCCESS;
@@ -48,7 +54,8 @@ namespace beckhoff_ads_hardware_interface
         {
             try
             {
-                layout.ads_handle = *(ads_device_->GetHandle(layout.plc_name_symbolic));
+                layout.ads_handle_ref.emplace(ads_device_->GetHandle(layout.plc_name_symbolic));
+                layout.ads_handle = *layout.ads_handle_ref.value();
             }
             catch (const std::exception &ex)
             {
@@ -59,7 +66,8 @@ namespace beckhoff_ads_hardware_interface
         {
             try
             {
-                layout.ads_handle = *(ads_device_->GetHandle(layout.plc_name_symbolic));
+                layout.ads_handle_ref.emplace(ads_device_->GetHandle(layout.plc_name_symbolic));
+                layout.ads_handle = *layout.ads_handle_ref.value();
             }
             catch (const std::exception &ex)
             {
@@ -276,7 +284,7 @@ namespace beckhoff_ads_hardware_interface
                     else
                     {
                         layout.plc_element_byte_size = plcTypeByteSize(layout.plc_type);
-                        ads_item_layouts_read_.push_back(layout);
+                        ads_item_layouts_read_.push_back(std::move(layout));
                         processed_plc_symbols[plc_symbol] = true;
                     }
                 }
@@ -285,7 +293,7 @@ namespace beckhoff_ads_hardware_interface
                 {
                     // Find the ADS Data Layout object of the corresponding PLC symbol
                     auto it = std::find_if(ads_item_layouts_read_.begin(), ads_item_layouts_read_.end(),
-                                           [&plc_symbol](ADSDataLayout layout)
+                                           [&plc_symbol](const ADSDataLayout &layout)
                                            { return layout.plc_name_symbolic == plc_symbol; });
 
                     // Add the interface name the layout
@@ -374,7 +382,7 @@ namespace beckhoff_ads_hardware_interface
                     else
                     {
                         layout.plc_element_byte_size = plcTypeByteSize(layout.plc_type);
-                        ads_item_layouts_write_.push_back(layout);
+                        ads_item_layouts_write_.push_back(std::move(layout));
                         processed_plc_symbols[plc_symbol] = true;
                     }
                 }
@@ -383,7 +391,7 @@ namespace beckhoff_ads_hardware_interface
                 {
                     // Look for the ADS Data Layout of the corresponding PLC symbol
                     auto it = std::find_if(ads_item_layouts_write_.begin(), ads_item_layouts_write_.end(),
-                                           [&plc_symbol](ADSDataLayout layout)
+                                           [&plc_symbol](const ADSDataLayout &layout)
                                            { return layout.plc_name_symbolic == plc_symbol; });
 
                     // Add the command interface name the layout
