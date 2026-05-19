@@ -12,6 +12,7 @@
 #ifndef beckhoff_ads_hardware_interface__BECKHOFF_SYSTEM_HPP_
 #define beckhoff_ads_hardware_interface__BECKHOFF_SYSTEM_HPP_
 
+#include <optional>
 #include <string>
 #include <vector>
 #include <limits>
@@ -51,7 +52,8 @@ namespace beckhoff_ads_hardware_interface
     // Configured from yaml
     std::string plc_name_symbolic; // e.g., "MAIN.Joint_Pos_State". Used to get the handle.
     PLCType plc_type;
-    uint32_t ads_handle; // PLC Handle for the symbolic name. Not using AdsHandle, as we don't need a shared ptr, just a value to paste in the message
+    std::optional<AdsHandle> ads_handle_owner; // RAII owner; releases SYM_HNDBYNAME on destruction. Must outlive any use of ads_handle.
+    uint32_t ads_handle; // PLC Handle value cached for the sum-request headers. Mirrors **ads_handle_owner.
 
     size_t num_elements;          // 6 for LREAL[6], 1 for single LREAL/BOOL etc.
     size_t plc_element_byte_size; // byte size of ONE element on PLC (e.g., 8 for LREAL, 1 for BOOL).
