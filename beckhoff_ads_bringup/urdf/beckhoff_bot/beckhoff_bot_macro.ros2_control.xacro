@@ -6,7 +6,8 @@
     <xacro:macro name="beckhoff_bot_ros2_control" params="
                 name
                 mock_hardware:=false
-                mock_sensor_commands:=false"
+                mock_sensor_commands:=false
+                read_mode:=notification"
                 >
 
         <ros2_control name="${name}" type="system">
@@ -21,6 +22,8 @@
                 <param name="plc_ams_net_id">192.168.122.2.1.1</param>
                 <param name="plc_ams_port">851</param>
                 <param name="local_ams_net_id">192.168.122.1.1.1</param>
+                <!-- read_mode: notification (default, PLC pushes updates) | polling (synchronous SUM read) -->
+                <param name="read_mode">${read_mode}</param>
             </xacro:unless>
         </hardware>
 
@@ -36,7 +39,9 @@
         <sensor name="robot_sensor">
             <xacro:state_interface_PLC name="statusError" PLC_symbol="MAIN.statusError" PLC_type="BOOL"/>
             <xacro:state_interface_PLC name="batteryVoltage" PLC_symbol="MAIN.batteryVoltage" PLC_type="REAL"/>
-            <xacro:state_interface_PLC name="currentPos_0" PLC_symbol="MAIN.currentPos" PLC_type="LREAL" n_elements="2" index="0" />
+            <!-- currentPos changes every cycle, so stream it cyclically (1 ms) rather than on-change.
+                 The first interface naming MAIN.currentPos sets the notification config for the whole array. -->
+            <xacro:state_interface_PLC name="currentPos_0" PLC_symbol="MAIN.currentPos" PLC_type="LREAL" n_elements="2" index="0" notify_mode="cyclic" notify_cycle_ms="1" />
             <xacro:state_interface_PLC name="currentPos_1" PLC_symbol="MAIN.currentPos" PLC_type="LREAL" n_elements="2" index="1" />
             <xacro:state_interface_PLC name="pickCount" PLC_symbol="MAIN.pickCount" PLC_type="UINT" />
             <xacro:state_interface_PLC name="currentTemperature" PLC_symbol="MAIN.currentTemperature" PLC_type="INT" />
@@ -46,7 +51,7 @@
             <!-- In this example, these mirror command interfaces, so we can monitor if the variables are set correctly. -->
             <xacro:state_interface_PLC name="joggingEnabled" PLC_symbol="MAIN.joggingEnabled" PLC_type="BOOL" />
             <xacro:state_interface_PLC name="myRobotMode" PLC_symbol="MAIN.myRobotMode" PLC_type="UDINT"/>
-            <xacro:state_interface_PLC name="motionType" PLC_symbol="MAIN.motionType" PLC_type="UDINT"/>
+            <xacro:state_interface_PLC name="motionType" PLC_symbol="MAIN.motionType" PLC_type="USINT"/>
             <xacro:state_interface_PLC name="commandPos_0" PLC_symbol="MAIN.commandPos" PLC_type="BOOL" n_elements="2" index="0" />
             <xacro:state_interface_PLC name="commandPos_1" PLC_symbol="MAIN.commandPos" PLC_type="BOOL" n_elements="2" index="1" />
         </sensor>

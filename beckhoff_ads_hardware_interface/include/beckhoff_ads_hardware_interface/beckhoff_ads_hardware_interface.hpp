@@ -12,6 +12,7 @@
 #ifndef beckhoff_ads_hardware_interface__BECKHOFF_SYSTEM_HPP_
 #define beckhoff_ads_hardware_interface__BECKHOFF_SYSTEM_HPP_
 
+#include <atomic>
 #include <optional>
 #include <string>
 #include <vector>
@@ -26,6 +27,7 @@
 
 #include "ads/AdsLib.h"
 #include "ads/AdsDevice.h"
+#include "ads/AdsNotificationOOI.h"
 namespace beckhoff_ads_hardware_interface
 {
 
@@ -57,6 +59,12 @@ namespace beckhoff_ads_hardware_interface
 
     size_t num_elements;          // 6 for LREAL[6], 1 for single LREAL/BOOL etc.
     size_t plc_element_byte_size; // byte size of ONE element on PLC (e.g., 8 for LREAL, 1 for BOOL).
+
+    // ADS device-notification parameters (read path only; populated from URDF).
+    // nCycleTime / nMaxDelay are expressed in ADS 100 ns ticks (URDF gives milliseconds).
+    uint32_t notify_trans_mode = ADSTRANS_SERVERONCHA; // ADSTRANS_SERVERONCHA or ADSTRANS_SERVERCYCLE
+    uint32_t notify_cycle_100ns = 10u * 10000u;        // default 10 ms change-check / push interval
+    uint32_t notify_max_delay_100ns = 0u;              // 0 = deliver each sample immediately (no batching)
 
     // If we have an identically named command and state interface, in case there are no new commands to be sent to the robot, we want to use the value read in the state interface for the next request.
     // for mapping the ros2 state interfaces names to the corresponding command interfaces names <command_interface_name, state_interface_name>
@@ -97,6 +105,14 @@ namespace beckhoff_ads_hardware_interface
     std::string fallback_state_interface_name; // The state interface name corresponding to the current command interface name
   };
 
+  // Notification read path: maps a state interface to the lock-free cache slot that the
+  // background ADS notification callback writes into. read() simply loads the latest value.
+  struct NotifReadTarget
+  {
+    std::string state_interface_name;
+    std::atomic<double> *cache; // points into process-static notification storage (see .cpp)
+  };
+
   class BeckhoffADSHardwareInterface : public hardware_interface::SystemInterface
   {
   public:
@@ -134,6 +150,11 @@ namespace beckhoff_ads_hardware_interface
     std::unique_ptr<AdsDevice> ads_device_; // Manages the route/connection to the PLC
     bool configure_ads_device();
 
+    // Read strategy: false = synchronous SUM read every cycle (default),
+    // true = PLC-pushed device notifications cached for a non-blocking read().
+    bool read_via_notifications_ = false;
+    bool setup_notifications(); // registers one notification per read symbol
+
     // Metadata (populated in on interface export)
     // Describes each variable on the PLC
     std::vector<ADSDataLayout> ads_item_layouts_read_;
@@ -158,6 +179,13 @@ namespace beckhoff_ads_hardware_interface
 
     std::vector<ReadInstruction> ads_read_instructions_;
     std::vector<WriteInstruction> ads_write_instructions_;
+
+    // Notification read path. read_notifications_ owns the live ADS subscriptions; each
+    // AdsNotification's destructor calls DeleteNotification, which dereferences ads_device_,
+    // so this MUST be declared after ads_device_ (destroyed first) and cleared before
+    // ads_device_.reset() in on_shutdown/on_deactivate.
+    std::vector<AdsNotification> read_notifications_;
+    std::vector<NotifReadTarget> notif_read_targets_;
   };
 
 } // namespace beckhoff_ads_hardware_interface

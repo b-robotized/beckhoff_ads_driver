@@ -15,13 +15,26 @@
         </command_interface>
     </xacro:macro>
 
-    <xacro:macro name="state_interface_PLC" params="name PLC_symbol PLC_type n_elements:=1 index:=''">
+    <xacro:macro name="state_interface_PLC" params="name PLC_symbol PLC_type n_elements:=1 index:='' notify_mode:='' notify_cycle_ms:='' notify_max_delay_ms:=''">
         <state_interface name="${name}">
             <param name="PLC_symbol">${PLC_symbol}</param>
             <param name="PLC_type">${PLC_type}</param>
             <param name="n_elements">${n_elements}</param>
             <xacro:if value="${index != ''}">
                 <param name="index">${index}</param>
+            </xacro:if>
+            <!-- Notification tuning (used when the hardware runs read_mode=notification).
+                 notify_mode: onchange (default) | cyclic. notify_cycle_ms / notify_max_delay_ms
+                 are milliseconds. One notification covers the whole symbol; the first interface
+                 naming a symbol sets its config. -->
+            <xacro:if value="${notify_mode != ''}">
+                <param name="notify_mode">${notify_mode}</param>
+            </xacro:if>
+            <xacro:if value="${notify_cycle_ms != ''}">
+                <param name="notify_cycle_ms">${notify_cycle_ms}</param>
+            </xacro:if>
+            <xacro:if value="${notify_max_delay_ms != ''}">
+                <param name="notify_max_delay_ms">${notify_max_delay_ms}</param>
             </xacro:if>
         </state_interface>
     </xacro:macro>

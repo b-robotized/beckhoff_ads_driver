@@ -35,6 +35,7 @@ These parameters define the connection to the target PLC.
 | `plc_ams_net_id`   | `string` | The AMS NetID of the target PLC (e.g., "192.168.1.1.1.1"). |
 | `local_ams_net_id` | `string` | The AMS NetID of the computer running ROS.      |
 | `plc_ams_port`     | `string` | The AMS Port of the PLC runtime (e.g., "851").  |
+| `read_mode`        | `string` | (Optional) `notification` (default) reads state via PLC-pushed ADS device notifications cached for a non-blocking `read()`. `polling` uses the synchronous ADS Sum-Read every cycle. Case-insensitive. |
 
 ### 2. Interface Parameters
 For each `<state_interface>` and `<command_interface>`, you must provide parameters that link it to a PLC variable.
@@ -46,6 +47,12 @@ For each `<state_interface>` and `<command_interface>`, you must provide paramet
 | `n_elements`    | `integer` | (Optional) The number of elements if the symbol is an array. Defaults to 1. |
 | `index`         | `integer` | (Optional) The index within the PLC array that this interface corresponds to. Defaults to 0. |
 | `initial_value` | `double`  | (Optional, Command Only) The initial value for a command interface before the first command is received. |
+| `notify_mode`   | `string`  | (Optional, State Only) Notification transmission mode when `read_mode=notification`: `onchange` (default) pushes only when the value changes; `cyclic` pushes every `notify_cycle_ms`. Use `cyclic` for continuously-changing signals. |
+| `notify_cycle_ms` | `double` | (Optional, State Only) For `onchange`, how often the PLC checks for a change; for `cyclic`, the push interval. Default 10 ms (1 ms granularity). |
+| `notify_max_delay_ms` | `double` | (Optional, State Only) Server-side batching window. Default 0 = deliver each sample immediately (lowest latency). Raise to coalesce bursty signals into fewer packets. |
+
+> Notification config is per **symbol**: one notification covers the whole symbol (all array
+> elements), and the first state interface naming a symbol sets its `notify_*` values.
 
 ### Supported PLC Types
 The following PLC data types are supported and are automatically converted to and from `double` values.
@@ -133,9 +140,6 @@ In our case for example, it corresponds to the interface `virbr0`.
 
 # Future Plans
 Feel free to contribute on any of these!
-
-### ADS Notification-Based Updates
-The ADS protocol supports asynchronous callbacks, where the PLC can push a variable update to the client ("notifications"). We plan to add a mechanism to register for these notifications directly from the URDF. This will allow state interfaces for rarely updated variables to be updated via callbacks instead of being polled in every `read()` cycle, further optimizing the main control loop.
 
 ### Support for STRING Data Type
 We plan to add support for reading PLC `STRING` variables. As `ros2_control` state interfaces are numeric, this would likely be exposed through a separate mechanism, such as publishing to a ROS topic, for monitoring purposes.
