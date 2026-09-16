@@ -13,6 +13,7 @@
 #include <vector>
 #include <cstdint>
 #include <algorithm> // std::transform
+#include <utility>
 
 #include "beckhoff_ads_hardware_interface/beckhoff_ads_hardware_interface.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
@@ -21,8 +22,13 @@
 namespace beckhoff_ads_hardware_interface
 {
     hardware_interface::CallbackReturn BeckhoffADSHardwareInterface::on_init(
-        const hardware_interface::HardwareComponentParams & /*params*/)
+        const hardware_interface::HardwareComponentInterfaceParams &params)
     {
+        if (hardware_interface::SystemInterface::on_init(params) != CallbackReturn::SUCCESS)
+        {
+            return CallbackReturn::ERROR;
+        }
+
         logging_throttle_clock_ = std::make_shared<rclcpp::Clock>(RCL_STEADY_TIME);
 
         return CallbackReturn::SUCCESS;
@@ -31,6 +37,12 @@ namespace beckhoff_ads_hardware_interface
     hardware_interface::CallbackReturn BeckhoffADSHardwareInterface::on_configure(
         const rclcpp_lifecycle::State & /*previous_state*/)
     {
+        // Before anything else: configure_ads_device() below REPLACES ads_device_, which destroys
+        // the previous one. A handle left over from an earlier configure would then be released
+        // against a freed device -- the same fault as on_shutdown. The layout vectors are cleared
+        // again further down as part of building them; this is about WHEN, not whether.
+        release_ads_handles();
+
         // Configure ADS Client Device
         if (!configure_ads_device())
         {
@@ -48,7 +60,8 @@ namespace beckhoff_ads_hardware_interface
         {
             try
             {
-                layout.ads_handle = *(ads_device_->GetHandle(layout.plc_name_symbolic));
+                layout.ads_handle_ref.emplace(ads_device_->GetHandle(layout.plc_name_symbolic));
+                layout.ads_handle = *layout.ads_handle_ref.value();
             }
             catch (const std::exception &ex)
             {
@@ -59,7 +72,8 @@ namespace beckhoff_ads_hardware_interface
         {
             try
             {
-                layout.ads_handle = *(ads_device_->GetHandle(layout.plc_name_symbolic));
+                layout.ads_handle_ref.emplace(ads_device_->GetHandle(layout.plc_name_symbolic));
+                layout.ads_handle = *layout.ads_handle_ref.value();
             }
             catch (const std::exception &ex)
             {
@@ -276,7 +290,7 @@ namespace beckhoff_ads_hardware_interface
                     else
                     {
                         layout.plc_element_byte_size = plcTypeByteSize(layout.plc_type);
-                        ads_item_layouts_read_.push_back(layout);
+                        ads_item_layouts_read_.push_back(std::move(layout));
                         processed_plc_symbols[plc_symbol] = true;
                     }
                 }
@@ -285,7 +299,7 @@ namespace beckhoff_ads_hardware_interface
                 {
                     // Find the ADS Data Layout object of the corresponding PLC symbol
                     auto it = std::find_if(ads_item_layouts_read_.begin(), ads_item_layouts_read_.end(),
-                                           [&plc_symbol](ADSDataLayout layout)
+                                           [&plc_symbol](const ADSDataLayout &layout)
                                            { return layout.plc_name_symbolic == plc_symbol; });
 
                     // Add the interface name the layout
@@ -374,7 +388,7 @@ namespace beckhoff_ads_hardware_interface
                     else
                     {
                         layout.plc_element_byte_size = plcTypeByteSize(layout.plc_type);
-                        ads_item_layouts_write_.push_back(layout);
+                        ads_item_layouts_write_.push_back(std::move(layout));
                         processed_plc_symbols[plc_symbol] = true;
                     }
                 }
@@ -383,7 +397,7 @@ namespace beckhoff_ads_hardware_interface
                 {
                     // Look for the ADS Data Layout of the corresponding PLC symbol
                     auto it = std::find_if(ads_item_layouts_write_.begin(), ads_item_layouts_write_.end(),
-                                           [&plc_symbol](ADSDataLayout layout)
+                                           [&plc_symbol](const ADSDataLayout &layout)
                                            { return layout.plc_name_symbolic == plc_symbol; });
 
                     // Add the command interface name the layout
@@ -699,6 +713,11 @@ namespace beckhoff_ads_hardware_interface
         const rclcpp_lifecycle::State & /*previous_state*/)
     {
         RCLCPP_INFO(getLogger(), "Releasing ADS resources...");
+        // Handles first, device second. The other order leaves every optional<AdsHandle> in the
+        // layout vectors holding a deleter bound to a freed AdsDevice; they then run at component
+        // destruction, inside ~ResourceManager, and segfault in DeleteSymbolHandle -> WriteReqEx
+        // -> GetLocalPort() on a dangling this.
+        release_ads_handles();
         if (ads_device_)
         {
             ads_device_.reset();
@@ -706,6 +725,14 @@ namespace beckhoff_ads_hardware_interface
         RCLCPP_INFO(getLogger(), "ADS resources released.");
 
         return hardware_interface::CallbackReturn::SUCCESS;
+    }
+
+    void BeckhoffADSHardwareInterface::release_ads_handles()
+    {
+        // Clearing the layouts is what actually frees the handles: destroying each
+        // optional<AdsHandle> runs the deleter that issues DeleteSymbolHandle on the PLC.
+        ads_item_layouts_read_.clear();
+        ads_item_layouts_write_.clear();
     }
 
     bool BeckhoffADSHardwareInterface::configure_ads_device()

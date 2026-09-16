@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 #include <limits>
+#include <optional>
 
 #include "hardware_interface/system_interface.hpp"
 #include "hardware_interface/handle.hpp"
@@ -51,6 +52,7 @@ namespace beckhoff_ads_hardware_interface
     // Configured from yaml
     std::string plc_name_symbolic; // e.g., "MAIN.Joint_Pos_State". Used to get the handle.
     PLCType plc_type;
+    std::optional<AdsHandle> ads_handle_ref; // Keep handle alive; destructor releases it.
     uint32_t ads_handle; // PLC Handle for the symbolic name. Not using AdsHandle, as we don't need a shared ptr, just a value to paste in the message
 
     size_t num_elements;          // 6 for LREAL[6], 1 for single LREAL/BOOL etc.
@@ -98,7 +100,7 @@ namespace beckhoff_ads_hardware_interface
   class BeckhoffADSHardwareInterface : public hardware_interface::SystemInterface
   {
   public:
-    hardware_interface::CallbackReturn on_init(const hardware_interface::HardwareComponentParams &params);
+    hardware_interface::CallbackReturn on_init(const hardware_interface::HardwareComponentInterfaceParams &params) override;
 
     hardware_interface::CallbackReturn on_configure(
         const rclcpp_lifecycle::State &previous_state) override;
@@ -131,6 +133,14 @@ namespace beckhoff_ads_hardware_interface
     // ADS Communication objects
     std::unique_ptr<AdsDevice> ads_device_; // Manages the route/connection to the PLC
     bool configure_ads_device();
+
+    /// Release every ADS symbol handle, while the AdsDevice that issued them is still alive.
+    ///
+    /// Each AdsHandle is a unique_ptr whose ResourceDeleter holds a std::function bound to the
+    /// AdsDevice (ads/AdsDevice.h), so releasing one after its device has been destroyed calls
+    /// DeleteSymbolHandle through a dangling object. Must therefore run BEFORE ads_device_ is
+    /// reset or replaced. Idempotent: safe when the layouts are already empty.
+    void release_ads_handles();
 
     // Metadata (populated in on interface export)
     // Describes each variable on the PLC
