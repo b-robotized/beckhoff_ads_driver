@@ -307,6 +307,9 @@ namespace beckhoff_ads_hardware_interface
         // Reserve worst-case scenario for layouts (each interface targets a different PLC symbol)
         ads_item_layouts_write_.clear();
         ads_item_layouts_write_.reserve(num_command_interfaces);
+        // Rebuilt from the URDF below; a stale entry would drive a value for an interface this
+        // configure no longer declares.
+        ads_shutdown_values_.clear();
 
         // Keep track of multiple interfaces targeting the same PLC symbol of type ARRAY[x], but different index
         std::map<std::string, bool> processed_plc_symbols;
@@ -330,6 +333,27 @@ namespace beckhoff_ads_hardware_interface
                             getLogger(),
                             "Invalid 'initial_value' ('%s') for command interface '%s'. Using NaN. Error: %s",
                             descr.interface_info.parameters.at("initial_value").c_str(),
+                            name.c_str(),
+                            ex.what());
+                    }
+                }
+
+                // Optional: the value to drive onto the PLC when this component deactivates.
+                // Parsed here, beside initial_value, because this is the one place that sees each
+                // command interface's parameters. Applied in on_deactivate(), not here.
+                if (descr.interface_info.parameters.count("shutdown_value"))
+                {
+                    try
+                    {
+                        ads_shutdown_values_[name] = std::stod(descr.interface_info.parameters.at("shutdown_value"));
+                    }
+                    catch (const std::exception &ex)
+                    {
+                        RCLCPP_WARN(
+                            getLogger(),
+                            "Invalid 'shutdown_value' ('%s') for command interface '%s'. Ignoring it, so this "
+                            "interface will NOT be driven on deactivate. Error: %s",
+                            descr.interface_info.parameters.at("shutdown_value").c_str(),
                             name.c_str(),
                             ex.what());
                     }
@@ -405,7 +429,35 @@ namespace beckhoff_ads_hardware_interface
     hardware_interface::CallbackReturn BeckhoffADSHardwareInterface::on_deactivate(
         const rclcpp_lifecycle::State & /*previous_state*/)
     {
-        // TODO: send some safety commands to the PLC?
+        // Drive every declared shutdown_value onto the PLC, in ONE final sum-write.
+        //
+        // This has to happen here rather than being published by a cooperating node on its way out.
+        // Controllers deactivate only a few hundred microseconds before the hardware does, which at
+        // any realistic update rate is less than one cycle -- so a command value set that late has
+        // no write() left to carry it. Doing it inside on_deactivate() is ordered by construction:
+        // the device and its handles are still alive here -- on_shutdown, which tears them down,
+        // runs after this -- and the write() below is the very last one.
+        //
+        // Reuses write() rather than repeating the packing: setting the commands first means write()
+        // picks them up exactly as it would a live command. Interfaces with no shutdown_value are
+        // left alone and keep their normal fallback behaviour.
+        if (!ads_shutdown_values_.empty() && ads_device_ && num_items_write_ > 0)
+        {
+            for (const auto &[interface_name, value] : ads_shutdown_values_)
+            {
+                set_command(interface_name, value);
+                RCLCPP_INFO(getLogger(), "Shutdown value: driving '%s' to %g", interface_name.c_str(), value);
+            }
+
+            if (write(rclcpp::Time{}, rclcpp::Duration{0, 0}) != hardware_interface::return_type::OK)
+            {
+                // Not fatal: deactivation must still complete, and refusing to deactivate would leave
+                // the component worse off than a PLC that missed one write. Loud, because a stop
+                // request that did not land is exactly what someone needs to know about.
+                RCLCPP_ERROR(getLogger(), "Failed to write shutdown values to the PLC; they may NOT have taken effect.");
+            }
+        }
+
         return CallbackReturn::SUCCESS;
     }
 
