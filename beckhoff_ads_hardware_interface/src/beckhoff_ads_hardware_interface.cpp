@@ -9,6 +9,7 @@
 // Author: Nikola Banovic
 // Contributor: Hajar Bartakh
 
+#include <csignal>
 #include <limits>
 #include <vector>
 #include <cstdint>
@@ -23,6 +24,16 @@ namespace beckhoff_ads_hardware_interface
     hardware_interface::CallbackReturn BeckhoffADSHardwareInterface::on_init(
         const hardware_interface::HardwareComponentParams & /*params*/)
     {
+        // A send to a PLC that went away must fail, not raise SIGPIPE: the default action kills
+        // the process, and under ros2_control that is the controller_manager with every other
+        // hardware component and controller in it. The ADS library sends with flags 0
+        // (AdsLib/Sockets.cpp) and is consumed as a vendor package, so the signal is ignored
+        // for the whole process; the send then fails with EPIPE and the library reports it as
+        // an ADS error.
+#ifndef _WIN32
+        std::signal(SIGPIPE, SIG_IGN);
+#endif
+
         logging_throttle_clock_ = std::make_shared<rclcpp::Clock>(RCL_STEADY_TIME);
 
         return CallbackReturn::SUCCESS;
